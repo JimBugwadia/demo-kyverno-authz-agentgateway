@@ -1,13 +1,13 @@
-# Demo CND France 2026
+# Demo KubeconEU 2026
 
-This demo showcases how Kyverno policies enforce authentication and authorization for MCP Gateway tool calls.
+This demo showcases how [Kyverno](https://kyverno.io/) policies enforce authentication and authorization for MCP tool calls through [agentgateway](https://agentgateway.dev/).
 
 ## Prerequisites
 
 - Kind cluster running with Kyverno Envoy Plugin
 - Keycloak configured with users and groups
-- Agent Gateway and KGateway deployed
-- Policies applied: `no-unauthenticated-calls` and `create-from-url-authz`
+- Agentgateway deployed
+- Policies applied: `no-unauthenticated-calls`, `restricted-group-deny-tools`, `dev-group-tool-guardrails`, and `create-from-url-authz`
 
 ## Setup
 
@@ -26,6 +26,26 @@ This demo showcases how Kyverno policies enforce authentication and authorizatio
    ./get-token.sh admin
    ```
 
+## Agent Integrations
+
+### Cursor 
+
+Create a `.cursor/mcp.json` file in the project.
+
+```
+{
+  "mcpServers": {
+    "agentgateway": {
+      "url": "http://gateway.kind.cluster:8080/mcp"
+    }
+  }
+}
+```
+
+Go into the Cursor Settings under Tools & MCP, and connect to the agentgateway MCP server. When prompted, run `mcp_auth` from the Cursor session. That will run the DCR flow with Keycloak and give you access to the gateway-exposed tools for your identity.
+
+For `kube-dev` users, the demo is intentionally locked down to read-only Kubernetes tools plus `k8s_create_resource_from_url`. Direct write paths such as `k8s_apply_manifest`, `k8s_create_resource`, `k8s_patch_resource`, `k8s_delete_resource`, and `shell` are blocked so they cannot bypass the SAR-protected flow.
+
 ---
 
 ## Example 1: Restrict all non-authorized calls
@@ -38,25 +58,32 @@ The `no-unauthenticated-calls` policy:
 - Validates JWT tokens from the Authorization header
 - Verifies token signature using Keycloak JWKS endpoint
 - Checks that the user belongs to allowed groups (`kube-dev` or `kube-admin`)
-- Returns 401 Unauthorized for invalid or missing tokens
+- Returns 401 Unauthorized for invalid/missing tokens or users not in an allowed group
 
 ### Test Case 1.1: Unauthenticated Request (Should Fail)
 
 ```bash
 # Make a request without authentication token
-curl -X POST https://gateway.kind.cluster/mcp \
+curl -v -X POST http://gateway.kind.cluster:8080/mcp \
   -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
   -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
     "method": "tools/call",
     "params": {
-      "name": "k8s_list_resources",
-      "arguments": {}
+      "name": "k8s_get_resources",
+      "arguments": {
+        "namespace": "default",
+        "resource_type": "pods"
+      }
     }
   }'
 ```
 
-**Expected Result:** 
+**Expected Result:**
 - Status: `401 Unauthorized`
+- Response: `{"error":"unauthorized","error_description":"JWT token required"}`
 - Policy denies the request because no JWT token is present
 
 ### Test Case 1.2: Valid Token with Authorized Group (Should Succeed)
@@ -65,16 +92,29 @@ curl -X POST https://gateway.kind.cluster/mcp \
 # Get token for alice (member of kube-dev group)
 TOKEN=$(./get-token.sh alice)
 
-# Make authenticated request
-curl -X POST https://gateway.kind.cluster/mcp \
-  -H 'Content-Type: application/json' \
+# Initialize MCP session
+SESSION_ID=$(curl -sS --http1.1 -i http://gateway.kind.cluster:8080/mcp \
   -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}' \
+  | grep -i "^Mcp-Session-Id:" | cut -d' ' -f2 | tr -d '\r')
+
+# Make authenticated request
+curl -X POST http://gateway.kind.cluster:8080/mcp -v \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Mcp-Session-Id: $SESSION_ID" \
   -d '{
+    "jsonrpc": "2.0",
+    "id": 2,
     "method": "tools/call",
     "params": {
-      "name": "k8s_list_resources",
+      "name": "k8s_get_resources",
       "arguments": {
-        "namespace": "default"
+        "namespace": "default",
+        "resource_type": "pods"
       }
     }
   }'
@@ -91,14 +131,20 @@ curl -X POST https://gateway.kind.cluster/mcp \
 
 ```bash
 # Make a request with an invalid token
-curl -X POST https://gateway.kind.cluster/mcp \
+curl -X POST http://gateway.kind.cluster:8080/mcp \
   -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
   -H 'Authorization: Bearer invalid-token-here' \
   -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
     "method": "tools/call",
     "params": {
-      "name": "k8s_list_resources",
-      "arguments": {}
+      "name": "k8s_get_resources",
+      "arguments": {
+        "namespace": "default",
+        "resource_type": "pods"
+      }
     }
   }'
 ```
@@ -110,25 +156,29 @@ curl -X POST https://gateway.kind.cluster/mcp \
 ### \[OPTIONAL\] Test Case 1.4: Valid Token with Unauthorized Group (Should Fail)
 
 ```bash
-# Get token for a user not in kube-dev or kube-admin groups
-TOKEN=$(./get-token.sh unauthorized-user)
+# Get token for a user in the "restricted" group (not in kube-dev or kube-admin)
+UNAUTHORIZED_TOKEN=$(./get-token.sh unauthorized-user)
 
-# Make authenticated request
-curl -X POST https://gateway.kind.cluster/mcp \
+# Attempt any request - should be denied at the authentication layer
+curl -v -X POST http://gateway.kind.cluster:8080/mcp \
   -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $TOKEN" \
+  -H 'Accept: application/json, text/event-stream' \
+  -H "Authorization: Bearer $UNAUTHORIZED_TOKEN" \
   -d '{
-    "method": "tools/call",
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
     "params": {
-      "name": "k8s_list_resources",
-      "arguments": {}
+      "protocolVersion": "2025-06-18",
+      "capabilities": {},
+      "clientInfo": {"name": "curl", "version": "1.0"}
     }
   }'
 ```
 
 **Expected Result:**
 - Status: `401 Unauthorized`
-- Policy denies the request because user group is not in the allowed list
+- Policy denies the request because user group (`restricted`) is not in the allowed list (`kube-dev`, `kube-admin`)
 
 ---
 
@@ -146,20 +196,44 @@ The `create-from-url-authz` policy:
 - Creates a Subject Access Review (SAR) to check if the user can create that resource type in the specified namespace
 - Returns 403 Forbidden if SAR denies the operation
 
+### RBAC Setup
+
+For the policy to perform SAR checks, the Kyverno authz server needs permission to create `SubjectAccessReview` resources against the Kubernetes API. Apply the RBAC resources before running this example:
+
+```bash
+kubectl apply -f policies/kyverno-sar-rbac.yaml
+```
+
+This creates a `ClusterRole` and `ClusterRoleBinding` that grant the `kyverno-authz-server` service account in the `kyverno` namespace permission to create `subjectaccessreviews`. Without this, the policy would be unable to query Kubernetes RBAC to determine whether a user is authorized to create a given resource.
+
 ### Test Case 2.1: Authorized Create Operation (Should Succeed)
 
 ```bash
-# Get token for alice (has create permissions in dev namespace)
+# Get token for alice (has create permissions in dev-team namespace)
 TOKEN=$(./get-token.sh alice)
 
-# Create a deployment manifest URL (example)
-MANIFEST_URL="https://raw.githubusercontent.com/example/deployment.yaml"
-
-# Make authenticated request to create resource from URL
-curl -X POST https://gateway.kind.cluster/mcp \
-  -H 'Content-Type: application/json' \
+# Initialize MCP session (REQUIRED!)
+SESSION_ID=$(curl -sS --http1.1 -i "http://gateway.kind.cluster:8080/mcp" \
   -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}' \
+  | grep -i "^Mcp-Session-Id:" | cut -d' ' -f2 | tr -d '\r')
+
+echo "Session ID: $SESSION_ID"
+
+# Deployment manifest URL
+MANIFEST_URL="https://raw.githubusercontent.com/kubernetes/website/main/content/en/examples/controllers/nginx-deployment.yaml"
+
+# Create resource in dev-team namespace (alice has permissions here)
+curl -s "http://gateway.kind.cluster:8080/mcp" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Mcp-Session-Id: $SESSION_ID" \
   -d "{
+    \"jsonrpc\": \"2.0\",
+    \"id\": 2,
     \"method\": \"tools/call\",
     \"params\": {
       \"name\": \"k8s_create_resource_from_url\",
@@ -172,11 +246,30 @@ curl -X POST https://gateway.kind.cluster/mcp \
 ```
 
 **Expected Result:**
-- Status: `200 OK`
-- Policy allows the request because:
-  - User is authenticated (from Example 1)
-  - SAR check confirms user has `create` permission for the resource type in `dev-team` namespace
-  - Resource is created successfully
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "deployment.apps/nginx-deployment created"
+      }
+    ]
+  }
+}
+```
+
+**Why it succeeds:**
+- ✅ User is authenticated with valid JWT token
+- ✅ SAR check confirms alice (kube-dev group) has `create` permission for deployments in `dev-team` namespace
+- ✅ Resource is created successfully
+
+**Verify the deployment was created:**
+```bash
+kubectl get deployments -n dev-team
+```
 
 ### Test Case 2.2: Unauthorized Create Operation (Should Fail)
 
@@ -184,13 +277,30 @@ curl -X POST https://gateway.kind.cluster/mcp \
 # Get token for alice (does NOT have create permissions in production namespace)
 TOKEN=$(./get-token.sh alice)
 
-# Attempt to create resource in production namespace
-MANIFEST_URL="https://raw.githubusercontent.com/example/deployment.yaml"
+# Gateway URL
+GATEWAY_URL="gateway.kind.cluster:8080"
 
-curl -X POST https://gateway.kind.cluster/mcp \
-  -H 'Content-Type: application/json' \
+# Initialize MCP session
+SESSION_ID=$(curl -sS --http1.1 -i "http://gateway.kind.cluster:8080/mcp" \
   -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}' \
+  | grep -i "^Mcp-Session-Id:" | cut -d' ' -f2 | tr -d '\r')
+
+echo "Session ID: $SESSION_ID"
+
+# Attempt to create resource in production namespace
+MANIFEST_URL="https://raw.githubusercontent.com/kubernetes/website/main/content/en/examples/controllers/nginx-deployment.yaml"
+
+curl -s "http://gateway.kind.cluster:8080/mcp" -v \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Mcp-Session-Id: $SESSION_ID" \
   -d "{
+    \"jsonrpc\": \"2.0\",
+    \"id\": 2,
     \"method\": \"tools/call\",
     \"params\": {
       \"name\": \"k8s_create_resource_from_url\",
@@ -204,9 +314,12 @@ curl -X POST https://gateway.kind.cluster/mcp \
 
 **Expected Result:**
 - Status: `403 Forbidden`
-- Policy denies the request because:
-  - SAR check fails - user does not have `create` permission for resources in `production` namespace
-  - Resource creation is blocked
+- Empty response body (request is denied at the authorization layer)
+
+**Why it fails:**
+- ✅ User is authenticated with valid JWT token
+- ❌ SAR check fails - alice (kube-dev group) does NOT have `create` permission for deployments in `production` namespace
+- ❌ Resource creation is blocked by the `create-from-url-authz` policy
 
 ---
 
