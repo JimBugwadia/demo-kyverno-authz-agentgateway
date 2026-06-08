@@ -382,12 +382,14 @@ config:
 authzServer:
   container:
     image:
+      registry: ghcr.io
       repository: lucchmielowski/kyverno-authz
       tag: latest
       pullPolicy: Always
 validatingWebhookConfiguration:
   container:
     image:
+      registry: ghcr.io
       repository: lucchmielowski/kyverno-authz
       tag: latest
       pullPolicy: Always
