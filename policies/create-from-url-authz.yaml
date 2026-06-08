@@ -28,7 +28,7 @@ spec:
       expression: variables.mcpReq.GetStringArgument("url", "")
       
     - name: jwks
-      expression: jwks.Fetch("http://keycloak.keycloak.svc.cluster.local:8080/realms/master/protocol/openid-connect/certs")
+      expression: jwks.Fetch("http://keycloak-http.keycloak.svc.cluster.local:8080/realms/master/protocol/openid-connect/certs")
     - name: jwtString
       expression: |
         ("authorization" in object.attributes.request.http.headers) &&

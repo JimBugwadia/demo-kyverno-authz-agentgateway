@@ -22,7 +22,7 @@ spec:
 
     # Decode JWT token from user
     - name: jwks
-      expression: jwks.Fetch("http://keycloak.keycloak.svc.cluster.local:8080/realms/master/protocol/openid-connect/certs")
+      expression: jwks.Fetch("http://keycloak-http.keycloak.svc.cluster.local:8080/realms/master/protocol/openid-connect/certs")
     - name: jwtString
       expression: |
         variables.isPublicPath || !variables.hasAuthHeader ? "" :

@@ -10,7 +10,7 @@ spec:
     - name: mcpReq
       expression: mcp.Parse(object.attributes.request.http.body)
     - name: jwks
-      expression: jwks.Fetch("http://keycloak.keycloak.svc.cluster.local:8080/realms/master/protocol/openid-connect/certs")
+      expression: jwks.Fetch("http://keycloak-http.keycloak.svc.cluster.local:8080/realms/master/protocol/openid-connect/certs")
     - name: authHeader
       expression: |
         "authorization" in object.attributes.request.http.headers ? object.attributes.request.http.headers["authorization"] : ""
