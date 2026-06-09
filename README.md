@@ -1,4 +1,4 @@
-# Demo KubeconEU 2026
+# Demo Kyverno Authz + agentgateway
 
 This demo showcases how [Kyverno](https://kyverno.io/) policies enforce authentication and authorization for MCP tool calls through [agentgateway](https://agentgateway.dev/).
 
