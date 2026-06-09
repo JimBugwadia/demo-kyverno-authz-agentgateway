@@ -186,17 +186,15 @@ curl -v -X POST http://gateway.localhost:8080/mcp \
 
 ---
 
-## Example 2: Restrict create from URL via SAR
+## Example 2: Restrict resource creation via SAR
 
-This example demonstrates the `create-from-url-authz` policy that uses Kubernetes Subject Access Review (SAR) to verify if a user has permission to create resources from a URL.
+This example demonstrates the `create-resource-authz` policy that uses Kubernetes Subject Access Review (SAR) to verify if a user has permission to create resources from inline YAML.
 
 ### Policy Overview
 
-The `create-from-url-authz` policy:
-- Intercepts MCP tool calls for `k8s_create_resource_from_url`
-- Extracts namespace and URL from the MCP request arguments
-- Fetches and parses the Kubernetes manifest from the URL
-- Extracts the resource kind from the manifest
+The `create-resource-authz` policy:
+- Intercepts MCP tool calls for `k8s_create_resource`
+- Parses the inline `yaml_content` argument to extract the resource `kind` and `namespace`
 - Creates a Subject Access Review (SAR) to check if the user can create that resource type in the specified namespace
 - Returns 403 Forbidden if SAR denies the operation
 
@@ -226,8 +224,11 @@ set SESSION_ID (curl -sS --http1.1 -i "http://gateway.localhost:8080/mcp" \
 
 echo "Session ID: $SESSION_ID"
 
-# Deployment manifest URL
-set MANIFEST_URL "https://raw.githubusercontent.com/kubernetes/website/main/content/en/examples/controllers/nginx-deployment.yaml"
+# Deployment manifest as JSON (namespace set inline)
+set MANIFEST '{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"nginx-deployment","namespace":"dev-team","labels":{"app":"nginx"}},"spec":{"replicas":3,"selector":{"matchLabels":{"app":"nginx"}},"template":{"metadata":{"labels":{"app":"nginx"}},"spec":{"containers":[{"name":"nginx","image":"nginx:1.14.2","ports":[{"containerPort":80}]}]}}}}'
+
+# Build JSON body (jq wraps the manifest string safely)
+echo $MANIFEST | jq -Rc '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"k8s_create_resource","arguments":{"yaml_content":.}}}' > /tmp/mcp-body.json
 
 # Create resource in dev-team namespace (alice has permissions here)
 curl -s "http://gateway.localhost:8080/mcp" \
@@ -235,18 +236,7 @@ curl -s "http://gateway.localhost:8080/mcp" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "Mcp-Session-Id: $SESSION_ID" \
-  -d "{
-    \"jsonrpc\": \"2.0\",
-    \"id\": 2,
-    \"method\": \"tools/call\",
-    \"params\": {
-      \"name\": \"k8s_create_resource_from_url\",
-      \"arguments\": {
-        \"namespace\": \"dev-team\",
-        \"url\": \"$MANIFEST_URL\"
-      }
-    }
-  }"
+  --data @/tmp/mcp-body.json
 ```
 
 **Expected Result:**
@@ -258,7 +248,7 @@ curl -s "http://gateway.localhost:8080/mcp" \
     "content": [
       {
         "type": "text",
-        "text": "deployment.apps/nginx-deployment created"
+        "text": "deployment.apps/nginx-deployment created\n"
       }
     ]
   }
@@ -267,6 +257,7 @@ curl -s "http://gateway.localhost:8080/mcp" \
 
 **Why it succeeds:**
 - ✅ User is authenticated with valid JWT token
+- ✅ Policy parses `yaml_content` inline — no external URL fetch
 - ✅ SAR check confirms alice (kube-dev group) has `create` permission for deployments in `dev-team` namespace
 - ✅ Resource is created successfully
 
@@ -281,9 +272,6 @@ kubectl get deployments -n dev-team
 # Get token for alice (does NOT have create permissions in production namespace)
 set TOKEN (./get-token.sh alice)
 
-# Gateway URL
-set GATEWAY_URL "gateway.localhost:8080"
-
 # Initialize MCP session
 set SESSION_ID (curl -sS --http1.1 -i "http://gateway.localhost:8080/mcp" \
   -H "Authorization: Bearer $TOKEN" \
@@ -294,26 +282,17 @@ set SESSION_ID (curl -sS --http1.1 -i "http://gateway.localhost:8080/mcp" \
 
 echo "Session ID: $SESSION_ID"
 
-# Attempt to create resource in production namespace
-set MANIFEST_URL "https://raw.githubusercontent.com/kubernetes/website/main/content/en/examples/controllers/nginx-deployment.yaml"
+# Same manifest but targeting production namespace
+set MANIFEST '{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"nginx-deployment","namespace":"production","labels":{"app":"nginx"}},"spec":{"replicas":3,"selector":{"matchLabels":{"app":"nginx"}},"template":{"metadata":{"labels":{"app":"nginx"}},"spec":{"containers":[{"name":"nginx","image":"nginx:1.14.2","ports":[{"containerPort":80}]}]}}}}'
+
+echo $MANIFEST | jq -Rc '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"k8s_create_resource","arguments":{"yaml_content":.}}}' > /tmp/mcp-body.json
 
 curl -s "http://gateway.localhost:8080/mcp" -v \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "Mcp-Session-Id: $SESSION_ID" \
-  -d "{
-    \"jsonrpc\": \"2.0\",
-    \"id\": 2,
-    \"method\": \"tools/call\",
-    \"params\": {
-      \"name\": \"k8s_create_resource_from_url\",
-      \"arguments\": {
-        \"namespace\": \"production\",
-        \"url\": \"$MANIFEST_URL\"
-      }
-    }
-  }"
+  --data @/tmp/mcp-body.json
 ```
 
 **Expected Result:**
@@ -323,7 +302,7 @@ curl -s "http://gateway.localhost:8080/mcp" -v \
 **Why it fails:**
 - ✅ User is authenticated with valid JWT token
 - ❌ SAR check fails - alice (kube-dev group) does NOT have `create` permission for deployments in `production` namespace
-- ❌ Resource creation is blocked by the `create-from-url-authz` policy
+- ❌ Resource creation is blocked by the `create-resource-authz` policy
 
 ---
 

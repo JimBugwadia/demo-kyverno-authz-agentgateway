@@ -346,6 +346,7 @@ if [ "$SKIP_RBAC" = false ]; then
     print_success "RBAC configured"
     print_info "To create kubectl OIDC contexts (optional, requires adding OIDC to kind-config.yaml):"
     print_info "  ./bootstrap/create-config.sh"
+
 else
     print_warning "Skipping RBAC configuration"
 fi
@@ -379,20 +380,7 @@ EOF
       --values - <<EOF
 config:
   type: envoy
-authzServer:
-  container:
-    image:
-      registry: ghcr.io
-      repository: lucchmielowski/kyverno-authz
-      tag: latest
-      pullPolicy: Always
 validatingWebhookConfiguration:
-  container:
-    image:
-      registry: ghcr.io
-      repository: lucchmielowski/kyverno-authz
-      tag: latest
-      pullPolicy: Always
   certificates:
     certManager:
       issuerRef:
@@ -485,7 +473,7 @@ if [ -d ./policies ]; then
         kubectl apply -f policies/no-unauthenticated-calls.yaml
         kubectl apply -f policies/restricted-group-deny-tools.yaml
         kubectl apply -f policies/dev-group-tool-guardrails.yaml
-        kubectl apply -f policies/create-from-url-authz.yaml
+        kubectl apply -f policies/create-resource-authz.yaml
         print_success "Kyverno policies applied"
 
         print_info "Verifying policies..."

@@ -17,7 +17,7 @@ spec:
         port: 9081
       grpc: {}
       forwardBody:
-        maxSize: 1024
+        maxSize: 65536
 ---
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayPolicy

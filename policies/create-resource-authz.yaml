@@ -1,7 +1,7 @@
 apiVersion: policies.kyverno.io/v1beta1
 kind: ValidatingPolicy
 metadata:
-  name: create-from-url-authz
+  name: create-resource-authz
 spec:
   evaluation:
     mode: Envoy
@@ -11,14 +11,12 @@ spec:
         object.attributes.request.http.method == "POST" && object.attributes.request.http.path.startsWith("/mcp") ?
           mcp.Parse(object.attributes.request.http.body) :
           mcp.Parse("{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"noop\",\"params\":{}}")
-    - name: isCreateFromUrlCall
+    - name: isCreateResourceCall
       expression: |
         variables.mcpReq.Method == mcp.ToolsCallMethod &&
-        variables.mcpReq.ToolCall.Name == "k8s_create_resource_from_url"
-    - name: namespace
-      expression: variables.mcpReq.GetStringArgument("namespace", "")
-    - name: url
-      expression: variables.mcpReq.GetStringArgument("url", "")
+        variables.mcpReq.ToolCall.Name == "k8s_create_resource"
+    - name: yamlContent
+      expression: variables.mcpReq.GetStringArgument("yaml_content", "")
     - name: jwks
       expression: jwks.Fetch("http://keycloak-http.keycloak.svc.cluster.local:8080/realms/master/protocol/openid-connect/certs")
     - name: jwtString
@@ -33,9 +31,13 @@ spec:
           jwt.Decode(variables.jwtString, variables.jwks)
     - name: manifest
       expression: |
-        variables.isCreateFromUrlCall && variables.url != "" ?
-          yaml.UnmarshalFromURL(variables.url) :
+        variables.isCreateResourceCall && variables.yamlContent != "" ?
+          json.Unmarshal(variables.yamlContent) :
           dyn({"kind": "", "apiVersion": "v1"})
+    - name: namespace
+      expression: |
+        has(variables.manifest.metadata) && has(variables.manifest.metadata.namespace) ?
+          string(variables.manifest.metadata.namespace) : ""
     - name: apiGroup
       expression: |
         variables.manifest["apiVersion"].contains("/") ?
@@ -61,7 +63,7 @@ spec:
         }
     - name: sar
       expression: >-
-        variables.isCreateFromUrlCall ?
+        variables.isCreateResourceCall ?
           resource.Post("authorization.k8s.io/v1", "subjectaccessreviews", variables.sarSpec) :
           dyn({"status": dyn({"allowed": true})})
   matchConditions:
@@ -70,7 +72,7 @@ spec:
         object.attributes.request.http.method == "POST" &&
         object.attributes.request.http.path.startsWith("/mcp") &&
         mcp.Parse(object.attributes.request.http.body).Method == mcp.ToolsCallMethod &&
-        mcp.Parse(object.attributes.request.http.body).ToolCall.Name == "k8s_create_resource_from_url"
+        mcp.Parse(object.attributes.request.http.body).ToolCall.Name == "k8s_create_resource"
   validations:
     - expression: |
         has(variables.sar.status) && variables.sar.status.allowed == true ?
