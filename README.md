@@ -92,12 +92,12 @@ curl -v -X POST http://gateway.localhost:8080/mcp \
 
 ### Test Case 1.2: Valid Token with Authorized Group (Should Succeed)
 
-```bash
+```fish
 # Get token for alice (member of kube-dev group)
-TOKEN=$(./get-token.sh alice)
+set TOKEN (./get-token.sh alice)
 
 # Initialize MCP session
-SESSION_ID=$(curl -sS --http1.1 -i http://gateway.localhost:8080/mcp \
+set SESSION_ID (curl -sS --http1.1 -i http://gateway.localhost:8080/mcp \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
@@ -159,9 +159,9 @@ curl -X POST http://gateway.localhost:8080/mcp \
 
 ### \[OPTIONAL\] Test Case 1.4: Valid Token with Unauthorized Group (Should Fail)
 
-```bash
+```fish
 # Get token for a user in the "restricted" group (not in kube-dev or kube-admin)
-UNAUTHORIZED_TOKEN=$(./get-token.sh unauthorized-user)
+set UNAUTHORIZED_TOKEN (./get-token.sh unauthorized-user)
 
 # Attempt any request - should be denied at the authentication layer
 curl -v -X POST http://gateway.localhost:8080/mcp \
@@ -212,12 +212,12 @@ This creates a `ClusterRole` and `ClusterRoleBinding` that grant the `kyverno-au
 
 ### Test Case 2.1: Authorized Create Operation (Should Succeed)
 
-```bash
+```fish
 # Get token for alice (has create permissions in dev-team namespace)
-TOKEN=$(./get-token.sh alice)
+set TOKEN (./get-token.sh alice)
 
 # Initialize MCP session (REQUIRED!)
-SESSION_ID=$(curl -sS --http1.1 -i "http://gateway.localhost:8080/mcp" \
+set SESSION_ID (curl -sS --http1.1 -i "http://gateway.localhost:8080/mcp" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
@@ -227,7 +227,7 @@ SESSION_ID=$(curl -sS --http1.1 -i "http://gateway.localhost:8080/mcp" \
 echo "Session ID: $SESSION_ID"
 
 # Deployment manifest URL
-MANIFEST_URL="https://raw.githubusercontent.com/kubernetes/website/main/content/en/examples/controllers/nginx-deployment.yaml"
+set MANIFEST_URL "https://raw.githubusercontent.com/kubernetes/website/main/content/en/examples/controllers/nginx-deployment.yaml"
 
 # Create resource in dev-team namespace (alice has permissions here)
 curl -s "http://gateway.localhost:8080/mcp" \
@@ -277,15 +277,15 @@ kubectl get deployments -n dev-team
 
 ### Test Case 2.2: Unauthorized Create Operation (Should Fail)
 
-```bash
+```fish
 # Get token for alice (does NOT have create permissions in production namespace)
-TOKEN=$(./get-token.sh alice)
+set TOKEN (./get-token.sh alice)
 
 # Gateway URL
-GATEWAY_URL="gateway.localhost:8080"
+set GATEWAY_URL "gateway.localhost:8080"
 
 # Initialize MCP session
-SESSION_ID=$(curl -sS --http1.1 -i "http://gateway.localhost:8080/mcp" \
+set SESSION_ID (curl -sS --http1.1 -i "http://gateway.localhost:8080/mcp" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
@@ -295,7 +295,7 @@ SESSION_ID=$(curl -sS --http1.1 -i "http://gateway.localhost:8080/mcp" \
 echo "Session ID: $SESSION_ID"
 
 # Attempt to create resource in production namespace
-MANIFEST_URL="https://raw.githubusercontent.com/kubernetes/website/main/content/en/examples/controllers/nginx-deployment.yaml"
+set MANIFEST_URL "https://raw.githubusercontent.com/kubernetes/website/main/content/en/examples/controllers/nginx-deployment.yaml"
 
 curl -s "http://gateway.localhost:8080/mcp" -v \
   -H "Authorization: Bearer $TOKEN" \
