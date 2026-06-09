@@ -6,15 +6,9 @@ spec:
   evaluation:
     mode: Envoy
   variables:
+    # matchConditions guarantee POST /mcp with k8s_create_resource before variables are evaluated
     - name: mcpReq
-      expression: |
-        object.attributes.request.http.method == "POST" && object.attributes.request.http.path.startsWith("/mcp") ?
-          mcp.Parse(object.attributes.request.http.body) :
-          mcp.Parse("{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"noop\",\"params\":{}}")
-    - name: isCreateResourceCall
-      expression: |
-        variables.mcpReq.Method == mcp.ToolsCallMethod &&
-        variables.mcpReq.ToolCall.Name == "k8s_create_resource"
+      expression: mcp.Parse(object.attributes.request.http.body)
     - name: yamlContent
       expression: variables.mcpReq.GetStringArgument("yaml_content", "")
     - name: jwks
@@ -25,13 +19,14 @@ spec:
         object.attributes.request.http.headers["authorization"].startsWith("Bearer ") ?
           object.attributes.request.http.headers["authorization"].split(" ")[1] : ""
     - name: decodedJwt
+      # dummy invalid token (header: {alg:HS256}, payload: {}, sig: invalid) — CEL type safety when no JWT present
       expression: |
         variables.jwtString == "" ?
           jwt.Decode("eyJhbGciOiJIUzI1NiJ9.e30.invalid", variables.jwks) :
           jwt.Decode(variables.jwtString, variables.jwks)
     - name: manifest
       expression: |
-        variables.isCreateResourceCall && variables.yamlContent != "" ?
+        variables.yamlContent != "" ?
           json.Unmarshal(variables.yamlContent) :
           dyn({"kind": "", "apiVersion": "v1"})
     - name: namespace
@@ -62,10 +57,7 @@ spec:
           })
         }
     - name: sar
-      expression: >-
-        variables.isCreateResourceCall ?
-          resource.Post("authorization.k8s.io/v1", "subjectaccessreviews", variables.sarSpec) :
-          dyn({"status": dyn({"allowed": true})})
+      expression: resource.Post("authorization.k8s.io/v1", "subjectaccessreviews", variables.sarSpec)
   matchConditions:
     - name: isToolsCall
       expression: |
